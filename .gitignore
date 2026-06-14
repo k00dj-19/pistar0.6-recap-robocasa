@@ -10,3 +10,6 @@ __pycache__/
 *.npz
 glvnd/
 docs/NOTEBOOK_PLAN.md
+
+# notebook generator — kept local, not published
+build_notebook.py

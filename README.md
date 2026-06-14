@@ -119,12 +119,11 @@ ROLLOUTS=<comma_list> TASK=OpenDrawer BASE=<π_pre> EXPERT=full \
 #  (d) closed-loop eval (n=50, held-out seed)
 SEED=5000 sbatch slurm/eval_robocasa.sbatch <out_dir> positive OpenDrawer 50 10
 
-# Figures + showcase videos
-python build_notebook.py                              # regenerates the ε=0.5 curve + diagrams + notebook
-sbatch slurm/record_showcase.sbatch <ckpt> OpenDrawer positive <out> 10   # labeled rollout clips
+# Showcase videos (labeled rollout clips)
+sbatch slurm/record_showcase.sbatch <ckpt> OpenDrawer positive <out> 10
 ```
 
-The full K=3 × 4-task sweep + ε-sweep were run with an idempotent, preemption-safe orchestrator
+The full K=3 per-task sweep + ε-sweep were run with an idempotent, preemption-safe orchestrator
 (`slurm/vlmvf_manage.sh` + `vlmvf_watcher.sbatch`): output-driven submission across own/extra/share
 QOS, with resume (extract shards, RECAP checkpoints) and auto-resubmit on preemption.
 
@@ -199,9 +198,19 @@ docs/assets/        figures + rollout videos embedded by tutorial.ipynb
 tutorial.ipynb      the report (paper walkthrough + method + results + research question)
 ```
 
+## Models & data (HuggingFace Hub)
+- **Base model (π0.5):** [`lerobot/pi05_base`](https://huggingface.co/lerobot/pi05_base)
+- **RoboCasa demo datasets:** [`pepijn223/robocasa_OpenDrawer`](https://huggingface.co/datasets/pepijn223/robocasa_OpenDrawer),
+  [`pepijn223/robocasa_PickPlaceCounterToCabinet`](https://huggingface.co/datasets/pepijn223/robocasa_PickPlaceCounterToCabinet)
+- **Our checkpoints:** [`dongjin630`](https://huggingface.co/dongjin630) —
+  [`-OpenDrawer-vlmvf`](https://huggingface.co/dongjin630/recap-robocasa-OpenDrawer-vlmvf) /
+  [`-PnPCounterToCab-vlmvf`](https://huggingface.co/dongjin630/recap-robocasa-PnPCounterToCab-vlmvf)
+  (RECAP, ε=0.5) plus the matching `-sft` baselines
+
 ## License / credits
 Educational reimplementation. Built on [LeRobot](https://github.com/huggingface/lerobot)
-(Apache-2.0), [RoboCasa](https://robocasa.ai), and datasets by `pepijn223`.
+(Apache-2.0), [RoboCasa](https://robocasa.ai), and datasets by
+[`pepijn223`](https://huggingface.co/pepijn223).
 π\*0.6 / RECAP is by Physical Intelligence (arXiv:2511.14759).
 
 ## 5. Evaluating the published checkpoints (HF Hub)
