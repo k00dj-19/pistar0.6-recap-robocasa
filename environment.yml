@@ -1,0 +1,20 @@
+# Conda environment for running tutorial.ipynb as a report (Path 1: read / render / re-run
+# the display + analysis cells). The notebook's heavy closed-loop eval (Path 2, RUN_EVAL=True)
+# additionally needs the full LeRobot π0.5 + RoboCasa + CUDA stack — see README.md §1.
+#
+#   conda env create -f environment.yml
+#   conda activate recap-robocasa-nb
+#   python -m ipykernel install --user --name recap-robocasa-nb
+#   jupyter lab tutorial.ipynb
+name: recap-robocasa-nb
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - jupyterlab
+  - notebook
+  - ipykernel
+  - ipywidgets
+  - matplotlib
+  - numpy
+  - ffmpeg        # for embedded rollout-video playback in the gallery cell

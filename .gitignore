@@ -1,0 +1,12 @@
+outputs/
+.venv*/
+.hf/
+.lerobot/
+slurm/logs/
+third_party/
+__pycache__/
+*.safetensors
+*.pt
+*.npz
+glvnd/
+docs/NOTEBOOK_PLAN.md
