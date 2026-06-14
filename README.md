@@ -11,9 +11,11 @@ paper's `V_pre` fine-tuned from the VLA backbone).
 > baseline at small scale, and what controls it?* We build a scene-aware **VLM value function**
 > (frozen PaliGemma prefix features) in place of a cheap proprioception-only critic, and sweep
 > the advantage threshold ε. Answer: with the scene-aware critic and a tuned **ε = 0.5**, RECAP
-> reaches **equal-or-better than SFT** — a **tie on OpenDrawer (58 = 58)** and a **win on the
-> harder PnP (38 vs 36)**. The threshold ε is the make-or-break knob: the common default
-> ε = 0.3 is the *worst* point (an inverted-U), which is why a naive run looks weak.
+> reaches **parity-or-better with SFT** — a **tie on OpenDrawer (58 = 58)** and a **small edge
+> on the harder PnP (38 vs 36)** at the final iteration (the +2 is within n=50 noise, so the
+> defensible claim is *parity, not domination*). The threshold ε matters a lot: across both
+> tasks the common default **ε = 0.3 is the worst of the three values tested** (a U-shape with
+> its valley at 0.3), which is why a naive run at the default looks weak.
 
 📓 **The report IS the notebook: [`tutorial.ipynb`](tutorial.ipynb)** — paper walkthrough +
 method + results + our research question, runnable end-to-end. This README is the repo guide;
@@ -31,15 +33,20 @@ jupyter lab tutorial.ipynb
 
 **Headline — RECAP (VLM-VF, ε = 0.5) vs SFT**, per-task specialists, success rate % (n=50, held-out seed 5000):
 
-| Task | SFT | RECAP i1 | RECAP i2 | RECAP i3 | best vs SFT |
+| Task | SFT | RECAP i1 | RECAP i2 | RECAP i3 (final) | i3 vs SFT |
 |---|---:|---:|---:|---:|:--:|
 | OpenDrawer | 58 | 54 | 44 | **58** | = tie |
-| PnP(CounterToCab) | 36 | 32 | 28 | **38** | +2 win |
+| PnP(CounterToCab) | 36 | 32 | 28 | **38** | +2 (within noise) |
 
-**Two ingredients.** (1) *Critic* — the scene-aware VLM value function matches-or-beats the
-proprio-only critic (OpenDrawer 50 vs 48; PnP tie at 32), so we adopt it throughout. (2)
-*Threshold* — an ε ∈ {0.1, 0.3, 0.5} sweep shows an **inverted-U** with ε = 0.5 best (OpenDrawer
-52/46/**58**, PnP 38/32/**38** at ε = 0.1/0.3/0.5). Full analysis in `tutorial.ipynb` §8–§11.
+At n=50 the 95% CI is ≈ ±13–14 pts, so these differences are not individually significant;
+the result is **parity** (RECAP does not degrade), with the PnP gain pointing the right way.
+
+**Two ingredients.** (1) *Critic* — the scene-aware VLM value function is better *calibrated*
+than a proprio-only one (the real, measurable win; see `fig4`), and its policy ties OpenDrawer
+(46=46) and is +4 on PnP (32 vs 28) at iter3, ε=0.3 — never worse, adopted on principle. (2)
+*Threshold* — an ε ∈ {0.1, 0.3, 0.5} sweep is **U-shaped with its valley at the default 0.3**;
+ε = 0.5 is best *within the tested range* (OpenDrawer 52/46/**58**, PnP 38/32/**38**). Full
+analysis in `tutorial.ipynb` §8–§11.
 
 ---
 

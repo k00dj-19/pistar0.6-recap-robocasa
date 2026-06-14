@@ -1,8 +1,11 @@
 """Build tutorial.ipynb (English) — a friendly, from-zero tutorial for the RECAP / pi*0.6
 reimplementation on LeRobot pi0.5 + RoboCasa.
 
-This script is the SOURCE OF TRUTH. It (1) regenerates two explanatory diagrams into
-docs/assets/ via matplotlib, then (2) emits tutorial.ipynb from md()/code() helpers.
+This script is the source of truth for the NOTEBOOK and the explanatory diagrams. It (1)
+regenerates the schematic/result diagrams (diagram_vla, diagram_recap_loop, curves_eps50)
+into docs/assets/ via matplotlib, then (2) emits tutorial.ipynb from md()/code() helpers.
+The two data-bearing figures (fig4_value_function.png, advantage_histogram.png) are produced
+by the value-function training script (recap/scripts/train_vf_robocasa_multitask.py), not here.
 
 Run:   python build_notebook.py
 Then validate it executes, then run this script ONCE MORE so the committed notebook
@@ -105,24 +108,31 @@ def make_diagrams(assets_dir="docs/assets"):
     # All values are measured closed-loop success % (n=50, seed 5000).
     iters = [1, 2, 3]
     panels = [
-        ("OpenDrawer", [54, 44, 58], 58, "#2563eb", "matches SFT (58 = 58)"),
-        ("PnP (Counter→Cabinet)", [32, 28, 38], 36, "#16a34a", "beats SFT (38 > 36)"),
+        ("OpenDrawer", [54, 44, 58], 58, "#2563eb", "ties SFT (58 = 58)"),
+        ("PnP (Counter→Cabinet)", [32, 28, 38], 36, "#16a34a", "edges SFT (38 vs 36, within noise)"),
     ]
+    # Wilson 95% CI half-width for a proportion p at n=50 (eval is n=50 episodes).
+    def wilson(p, n=50, z=1.96):
+        p = p / 100.0
+        c = z * (p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5 / (1 + z * z / n)
+        return 100.0 * c
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.4), sharey=False)
     for ax, (name, ys, sft, color, verdict) in zip(axes, panels):
-        ax.plot(iters, ys, "-o", color=color, lw=2.6, ms=9, label="RECAP (ε=0.5)")
+        err = [wilson(y) for y in ys]
+        ax.errorbar(iters, ys, yerr=err, fmt="-o", color=color, lw=2.6, ms=9,
+                    capsize=4, elinewidth=1.4, label="RECAP (ε=0.5) ± 95% CI")
         ax.axhline(sft, ls="--", color="#6b7280", lw=1.8, label=f"SFT baseline = {sft}")
         for x, y in zip(iters, ys):
-            ax.annotate(str(y), (x, y), textcoords="offset points", xytext=(0, 10),
-                        ha="center", fontsize=10, fontweight="bold", color=color)
+            ax.annotate(str(y), (x, y), textcoords="offset points", xytext=(8, 8),
+                        ha="left", fontsize=10, fontweight="bold", color=color)
         ax.set_xticks(iters); ax.set_xlabel("RECAP iteration")
         ax.set_ylabel("closed-loop success %  (n=50, seed 5000)")
-        lo = min(min(ys), sft) - 8; hi = max(max(ys), sft) + 8
+        lo = min(min(ys), sft) - 20; hi = max(max(ys), sft) + 20
         ax.set_ylim(lo, hi); ax.set_xlim(0.8, 3.2)
         ax.set_title(f"{name}\nby iter 3, RECAP {verdict}", fontsize=11, fontweight="bold", color=color)
         ax.grid(True, alpha=0.25); ax.legend(loc="lower right", fontsize=9, framealpha=0.95)
-    fig.suptitle("RECAP iteration curves at ε = 0.5 — equal-or-better than SFT on both tasks",
-                 fontsize=12.5, fontweight="bold", y=1.04)
+    fig.suptitle("RECAP iteration curves at ε = 0.5 — parity with SFT (final-iter ties/edges; gains within n=50 CI)",
+                 fontsize=11.5, fontweight="bold", y=1.04)
     fig.tight_layout()
     fig.savefig(os.path.join(assets_dir, "curves_eps50.png"), dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -322,6 +332,11 @@ cells.append(md(
 "Each timestep, π0.5 is fed **3 camera images + the robot’s state (16 numbers) + the text",
 "prompt**, and it outputs that chunk of motion.",
 "",
+"> **Why you’ll see “50” and “10.”** The model *predicts* a 50-step chunk at once, but at run",
+"> time we only *execute the first 10 steps* and then re-plan from fresh observations (a common",
+"> trick called *receding-horizon* control). That is the `n_action_steps = 10` you’ll see in",
+"> the eval config — predict 50, act on 10, repeat.",
+"",
 "> **What is “flow matching”? (high level)** It is a way to *generate* continuous outputs",
 "> (here, smooth motions) by starting from random noise and **iteratively cleaning it up**",
 "> into a coherent action — the same family of ideas as the *diffusion* models behind AI image",
@@ -419,9 +434,9 @@ cells.append(md(
 cells.append(md(
 "## 5. RECAP: learning from your own experience",
 "",
-"**RECAP** = *RL with Experience and Corrections via Advantage-conditioned Policies*. Don’t",
-"worry about the acronym — here is the whole idea through one analogy, then the four moving",
-"parts.",
+"**RECAP** = *RL with Experience and Corrections via Advantage-conditioned Policies* (**RL** =",
+"*reinforcement learning* — learning by trial-and-error rather than by copying). Don’t worry",
+"about the acronym — here is the whole idea through one analogy, then the four moving parts.",
 "",
 "### The coach analogy",
 "Imagine a **basketball coach reviewing game film** with a young player. The coach watches",
@@ -439,22 +454,29 @@ cells.append(md(
 "",
 "**1. A value function — the coach’s eye.** This is the heart of the method, so let’s be",
 "concrete. The **value function** `V(o)` is a *separate, small* network (it is **not** the",
-"robot policy). It looks at a single moment `o` and answers one question: **“starting from",
-"here, how well is this attempt going?”** Its inputs and output:",
+"robot policy). It looks at a single moment `o` (`o` = *observation* — one moment’s worth of",
+"what the robot sees) and answers one question: **“starting from here, how well is this",
+"attempt going?”** Its inputs and output:",
 "",
 "- **Input — what it sees.** A summary of the moment plus *which task* is being attempted.",
 "  For our **scene-aware** critic (§7) the “what it sees” is not raw pixels but the VLA’s own",
-"  **frozen visual features** (a 2048-number PaliGemma embedding of the three camera views),",
-"  so the coach literally sees the scene the robot sees; a small **task embedding** tells it",
-"  whether this is OpenDrawer or PnP. A 3-layer MLP maps that to the output.",
+"  **frozen visual features** — *frozen* means we reuse the VLA’s vision part exactly as-is",
+"  (we don’t retrain it), and a *feature* / *embedding* is just a fixed-length list of numbers",
+"  that summarizes an image: here a **2048-number** PaliGemma embedding of the three camera",
+"  views, so the coach literally sees the scene the robot sees. A small **task embedding** (a",
+"  few learned numbers per task) tells it whether this is OpenDrawer or PnP. A small standard",
+"  neural net (a 3-layer **MLP**, multi-layer perceptron) maps that to the output.",
 "- **Output — a score on a fixed scale.** We define the scale by the eventual **outcome** of",
 "  the trajectory the moment came from, normalized to **[−1, 0]**: a moment on a path that",
 "  ends in **success scores near 0**; a moment on a path that **fails scores near −1**. So",
 "  `V(o) ≈ 0` means *“on track,”* `V(o) ≈ −1` means *“this is going badly.”*",
-"- **How it’s trained (lightly).** Rather than regress a single number, `V(o)` predicts a",
-"  **distribution over 201 little bins** spanning [−1, 0] and is trained to match each frame’s",
-"  actual (Monte-Carlo) return; the reported score is just the distribution’s mean. Predicting",
-"  a distribution is simply more stable to train. (Full equation in the “under the hood” box.)",
+"- **How it’s trained (lightly).** The training target for a frame is its **return** — here",
+"  simply *whether the episode that frame belongs to eventually succeeded (→ near 0) or failed",
+"  (→ near −1)*; “**Monte-Carlo**” just means we read that off the actual finished episode",
+"  rather than estimating it. Rather than predict one number, `V(o)` predicts a **probability",
+"  spread over 201 little bins** between −1 and 0 (think: “70% chance this ends badly, 30% ok”)",
+"  and we report its mean. Predicting a spread instead of a point is simply more stable to",
+"  train. (Full equation in the “under the hood” box.)",
 "",
 "Does it actually work? The two panels below — both on **held-out data the critic never",
 "trained on** — say yes:",
@@ -472,13 +494,17 @@ cells.append(md(
 "  not just rank moments in the right order.",
 "",
 "**2. The advantage — “did this stretch go *better than expected*?”** From the value function",
-"we compute an **advantage** `A(o_t)`: looking ahead ~50 steps, did things improve more than",
-"the value function predicted at moment `t`? Positive advantage = that bit of behavior was",
-"genuinely good; negative = it made things worse.",
+"we compute an **advantage** `A(o_t)` for each moment `t` (a *timestep*): looking ~50 steps",
+"ahead, did things improve *more than* the value function expected at `t`? *Worked example:*",
+"if the coach scored the moment at −0.4 and 50 steps later the situation is worth −0.1, that",
+"**+0.3 better-than-expected** swing is the advantage. Positive advantage = that bit of",
+"behavior was genuinely good; negative = it made things worse.",
 "",
-"**3. Binarize — turn the score into a clean label.** For each task we pick a threshold ε and",
-"call the **top ε fraction** of moments **“positive”** and the rest **“negative.”** (The",
-"histogram below shows the advantage distribution and where the threshold falls.)",
+"**3. Binarize — turn the score into a clean label.** **ε (epsilon) is a *fraction*:** we keep",
+"the **top-ε fraction** of moments (by advantage) as **“positive”** and call the rest",
+"**“negative.”** So **ε = 0.5 labels the best-scoring 50% of moments positive**; ε = 0.1, only",
+"the top 10%. (The histogram below shows the advantage distribution and the cutoff; it is drawn",
+"at ε = 0.3 to illustrate — our main runs use ε = 0.5, see §10.)",
 "",
 "![Advantage distribution and threshold](docs/assets/advantage_histogram.png)",
 "",
@@ -489,8 +515,9 @@ cells.append(md(
 "behavior — each labeled. **At inference we simply prompt `Advantage: positive`** to summon",
 "the good kind. No new network architecture — just a smarter prompt.",
 "",
-"### Putting it in a loop (Algorithm 1, K = 3)",
-"RECAP repeats the loop in the diagram:",
+"### Putting it in a loop (the paper’s main loop, repeated K = 3 times)",
+"The four items above are the *ingredients*; now we use them in a repeating *loop* (here **K**",
+"= how many times we repeat it; we use K = 3). RECAP repeats the four loop steps in the diagram:",
 "1. **Roll out** the current policy in the simulator to gather fresh experience.",
 "2. **Label** every new frame with the value function (positive / negative).",
 "3. **Add** it to the growing data pool.",
@@ -549,9 +576,12 @@ cells.append(md(
 "We report on the **two tasks introduced in §3** (OpenDrawer and PnP), chosen to span the",
 "difficulty range.",
 "",
-"The SFT baseline and the RECAP policies **start from the same `π_pre` and get the same",
-"compute** — they differ only in *data + conditioning*. That makes the comparison fair: any",
-"difference is the method, not the budget.",
+"The SFT baseline and each RECAP policy **start from the same `π_pre` and use the same",
+"per-run fine-tuning budget** (same optimizer steps and batch size); they differ in *data +",
+"conditioning*. So the final-stage training is matched. To be clear, RECAP’s *total* pipeline",
+"is heavier — it also collects rollouts, trains a value function, and re-trains K = 3 times —",
+"so “equal compute” means the **policy fine-tune step**, not the whole pipeline. (If anything,",
+"that makes RECAP’s mere *parity* with SFT a conservative result: it spends more to get there.)",
 "",
 "> **Scope honesty (again, because it matters):** this is a **faithful method re-implementation",
 "> in a down-scaled setting**, not a reproduction of the paper’s real-world results. We will",
@@ -572,9 +602,11 @@ cells.append(md(
 "To test this, we compare two coaches:",
 "- **Proprioception-only critic (the cheap coach).** Sees only the robot’s 16-number body",
 "  state — **blind to the scene** (it cannot see the fridge, the mug, the drawer).",
-"- **Scene-aware VLM value function (the smart coach).** Built on top of the VLA itself: it",
-"  uses **frozen PaliGemma features** (the model’s own visual understanding), so it actually",
-"  *sees* what the robot sees. This matches the paper’s scene-aware `V_pre`.",
+"- **Scene-aware VLM value function (the smart coach).** A **VLM** (*vision-language model*) is",
+"  the seeing-and-reading half of a VLA, without the action part. This critic is built on the",
+"  VLA itself: it uses **frozen PaliGemma features** (the model’s own visual understanding), so",
+"  it actually *sees* what the robot sees. This matches the paper’s scene-aware `V_pre` (the",
+"  paper’s name for its pretrained value function).",
 "",
 "If the scene-aware coach gives better labels and a better policy, then yes — the value",
 "function was a real bottleneck. Let’s look at the numbers.",
@@ -586,30 +618,39 @@ cells.append(md(
 "",
 "Closed-loop success rate (**%, n = 50 episodes, held-out seed 5000**). We use our scene-aware",
 "VLM value function (§7) and the advantage threshold **ε = 0.5** (justified in §10), and show",
-"the SFT baseline alongside **each of the three RECAP iterations** so you can see the",
-"trajectory. The best iteration per row is in **bold**.",
+"the SFT baseline alongside **each of the three RECAP iterations**. We compare against the",
+"**final iteration (i3)** — the natural endpoint of the loop, fixed in advance (not the",
+"best-looking iteration). i3 is in **bold**.",
 "",
-"| Task | SFT (baseline) | RECAP i1 | RECAP i2 | RECAP i3 | RECAP best vs SFT |",
+"| Task | SFT (baseline) | RECAP i1 | RECAP i2 | **RECAP i3 (final)** | i3 vs SFT |",
 "|---|---:|---:|---:|---:|:--:|",
-"| OpenDrawer | 58 | 54 | 44 | **58** | **= tie** |",
-"| PnP (CounterToCab) | 36 | 32 | 28 | **38** | **+2 (RECAP wins)** |",
+"| OpenDrawer | 58 | 54 | 44 | **58** | = tie |",
+"| PnP (CounterToCab) | 36 | 32 | 28 | **38** | +2 |",
 "",
 "![RECAP iteration curve at ε=0.5](docs/assets/curves_eps50.png)",
 "",
 "### How to read this",
-"- **By iteration 3, RECAP reaches equal-or-better than SFT on both tasks:** it **ties** the",
-"  strong SFT baseline on **OpenDrawer (58 = 58)** and **surpasses** it on the harder",
-"  **PnP (38 vs 36)** — the task with the most headroom. So with a scene-aware critic and a",
-"  well-chosen ε, learning-from-experience does **clear the behavior-cloning bar** here.",
-"- **The gain concentrates where there is headroom.** On PnP (SFT only 36) RECAP adds real",
-"  value; on OpenDrawer (SFT already 58, near this setup’s ceiling) it matches but cannot",
-"  exceed what is essentially a saturated task.",
-"- **Honesty note on magnitude.** PnP’s +2 is a genuine win at the same fixed seed and budget,",
-"  though small relative to n = 50 sampling noise — so we frame the headline as *“RECAP matches",
-"  or beats SFT,”* not *“RECAP dominates.”* The iteration curve is also non-monotonic (a dip at",
-"  iter 2 before the iter-3 peak), which we attribute to off-policy data mixing (§11).",
+"- **By the final iteration, RECAP reaches equal-or-better than SFT on both tasks:** it",
+"  **ties** the strong SFT baseline on **OpenDrawer (58 = 58)** and **edges ahead** on the",
+"  harder **PnP (38 vs 36)** — the task with the most headroom. With a scene-aware critic and a",
+"  well-chosen ε, learning-from-experience **clears the behavior-cloning bar** here, rather",
+"  than falling below it.",
+"- **The gain concentrates where there is headroom.** On PnP (SFT only 36) RECAP adds value;",
+"  on OpenDrawer (SFT already 58, near this setup’s ceiling) it matches but cannot exceed an",
+"  essentially saturated task.",
+"- **How big is the win, really? (read this honestly).** Each number is a proportion over",
+"  **n = 50** episodes, so its 95% confidence interval is roughly **±13–14 points** (error bars",
+"  on the plot). At this sample size, **none of the iteration-to-iteration or +2 differences",
+"  are statistically significant** — the defensible claim is *“RECAP reaches parity with SFT",
+"  (it does not degrade), with a small PnP gain that points the right way but sits within",
+"  noise,”* **not** *“RECAP dominates.”* That parity is itself the result: at the paper’s",
+"  default threshold RECAP falls clearly below SFT (§10), and closing that gap took the two",
+"  ingredients below.",
+"- **The curve is non-monotonic** (a dip at iter 2 before the iter-3 recovery), which we",
+"  attribute to mixing in *off-policy* data — older rollouts from earlier policies (explained",
+"  in §11).",
 "",
-"Two ingredients made this work — the **scene-aware critic** (§9) and the **threshold ε**",
+"Two ingredients got us to parity — the **scene-aware critic** (§9) and the **threshold ε**",
 "(§10). We examine each next.",
 ))
 
@@ -617,20 +658,33 @@ cells.append(md(
 cells.append(md(
 "## 9. Ingredient 1 — did the coach matter? Critic ablation (proprio → VLM)",
 "",
-"This is the payoff for our research question (§7). Holding everything else fixed (same",
-"ε = 0.3 setting, same compute), we swapped the **cheap, scene-blind** proprioception-only",
-"critic for our **scene-aware VLM** critic, and compared the best-per-task success rate:",
+"An **ablation** means: change exactly *one* component and see what moves. Here we hold",
+"everything fixed and swap only the value function — the **cheap, scene-blind**",
+"proprioception-only critic versus our **scene-aware VLM** critic.",
 "",
-"| Critic (value function) | OpenDrawer | PnP | verdict |",
-"|---|---:|---:|---|",
-"| RECAP, proprioception-only | 48 | 32 | — |",
-"| RECAP, **scene-aware VLM** | **50** | **32** | improves OpenDrawer (+2), ties PnP |",
+"> **Note on the numbers below:** this experiment was run at the **default ε = 0.3** (it",
+"> predates the ε sweep in §10), so the absolute success rates are *lower* than §8’s ε = 0.5",
+"> headline. That is expected — here we only compare **proprio vs VLM**, not vs SFT. We report",
+"> the **final iteration (i3)**, the same metric as §10 (so the VLM/ε = 0.3 row matches §10).",
 "",
-"**The finding:** giving the coach *eyes* helps — the scene-aware critic produces equal-or-",
-"better advantage labels (it never did worse), confirming the value function was a genuine",
-"lever. So we **adopt the scene-aware VLM critic for all results in this notebook.** It is not",
-"enough *on its own* to clear SFT at ε = 0.3 — for that we also needed the right threshold,",
-"which is the second ingredient.",
+"| Critic (value function) | OpenDrawer (i3) | PnP (i3) |",
+"|---|---:|---:|",
+"| RECAP, proprioception-only | 46 | 28 |",
+"| RECAP, **scene-aware VLM** | **46** | **32** |",
+"",
+"**The finding — two parts, stated honestly:**",
+"- **What we can *measure* directly: better labels.** The scene-aware critic is visibly",
+"  better *calibrated* than a blind one — that is the value-over-time + calibration plot in",
+"  §5 (`fig4`), which is held-out and unambiguous. A critic that sees the scene simply judges",
+"  moments more accurately, which is the whole point of upgrading the coach.",
+"- **Downstream policy effect: positive but within noise.** The resulting policy **ties on",
+"  OpenDrawer (46 = 46)** and is **+4 on PnP (32 vs 28)** — never worse, but at n = 50 (±~14",
+"  pts) this is not a statistically significant policy gain. So we **adopt the scene-aware",
+"  critic on principle** (better labels, parity-or-better policy, and parity with the paper’s",
+"  scene-aware `V_pre`), not on the basis of a measured win.",
+"",
+"A better coach alone does not clear SFT at ε = 0.3 — for that we also needed the right",
+"threshold, the second ingredient.",
 ))
 
 # ===== Cell 11 — Sensitivity to epsilon (placeholder) ===============================
@@ -647,16 +701,23 @@ cells.append(md(
 "| OpenDrawer | 52 | 46 | **58** |",
 "| PnP (CounterToCab) | 38 | 32 | **38** |",
 "",
-"### The key finding: an inverted-U, and ε = 0.3 is the *worst* point",
-"- For **both** tasks, the paper’s common default **ε = 0.3 is the lowest-scoring setting**",
-"  (OpenDrawer 46, PnP 32). Performance **improves as you move ε away from 0.3 in either",
-"  direction**, peaking at **ε = 0.5** (OpenDrawer 58, PnP 38). This inverted-U is why a naive",
-"  run at the default threshold looks weak.",
-"- The intuition: ε too large floods training with mediocre “positive” frames; ε too small",
-"  starves it of positives. There is a sweet spot, and at our scale it sits at **ε = 0.5**.",
-"- **This is the lever behind the §8 headline.** The earlier impression that *“RECAP can’t",
-"  beat behavior cloning”* was really an artifact of an unlucky default threshold — not a",
-"  failure of the method. Tune ε and RECAP reaches parity-or-better (§8).",
+"### The key finding: ε = 0.3 (the default) is the *worst* of the three — a U-shape",
+"- For **both** tasks, the common default **ε = 0.3 is the lowest-scoring setting** (OpenDrawer",
+"  46, PnP 32), and moving ε *either* direction helps — a **U-shape with its valley at",
+"  ε = 0.3**. The best of the three points tested is **ε = 0.5** (OpenDrawer 58, PnP 38), which",
+"  is why we use it in §8.",
+"- **Scope caveat (important):** we tested only **{0.1, 0.3, 0.5}**, and **ε = 0.5 is the",
+"  largest value we tried** — so we can say it is *the best within the tested range*, but **not**",
+"  that it is a global optimum or “sweet spot”; we did not probe ε > 0.5, so the trend could",
+"  keep rising. And with n = 50 (±~14 pts) the 52↔46↔58 wiggle is not individually",
+"  significant — the robust, repeated-across-both-tasks signal is simply *“ε = 0.3 was the",
+"  worst choice we tested.”*",
+"- The intuition: too large an ε floods training with mediocre “positive” frames; too small",
+"  starves it of positives — so an unlucky middle default can underperform the extremes.",
+"- **This is the lever behind the §8 result.** The earlier impression that *“RECAP can’t beat",
+"  behavior cloning”* was, at least in part, an artifact of evaluating at a poor default",
+"  threshold — not a fixed property of the method. Pick a better ε and RECAP reaches parity",
+"  (§8).",
 "",
 "_(SFT is intentionally omitted from this table — it is a RECAP-internal hyperparameter sweep;",
 "the head-to-head comparison against SFT lives in §8.)_",
@@ -701,18 +762,21 @@ cells.append(md(
 "cherry-picking), with the simulator’s ground-truth success label in the filename.",
 "",
 "Below: for each task, the **SFT** rollout and the **RECAP (VLM-critic)** rollout, side by",
-"side in the same scene. These are **single fixed-seed samples** — they show per-scene luck,",
-"not the aggregate; the head-to-head success rates are the §8 table.",
+"side in the same scene. **Important:** these are **single fixed-seed samples** (one episode",
+"each), so they show **per-scene luck, not the aggregate** — the real comparison is the §8",
+"table. In particular, the **OpenDrawer** pair below happens to be a scene where **RECAP",
+"misses and SFT succeeds**, even though the two *tie* at 58/58 over 50 episodes — a fair",
+"reminder that one clip proves nothing. We lead with PnP, where RECAP completes the task.",
 "",
 "Then a **highlight** (`HIGHLIGHT_PnP_seed5007_*`): a PnP scene where **RECAP succeeds and",
-"SFT fails** — a concrete instance of the PnP win in §8, where RECAP genuinely learns a",
-"recovery the demo-cloned policy never acquired.",
+"SFT fails** — one illustrative episode consistent with RECAP’s small PnP edge in §8 (not, by",
+"itself, proof of a systematic win).",
 ))
 "# --- one cell per task (run each to watch that task's SFT vs RECAP, same scene) ---"
 # success rates are the §8 aggregate (n=50, seed 5000): SFT / RECAP-best
 _RATES = {"OpenDrawer": "58 / 58", "PickPlaceCounterToCabinet": "36 / 38"}
 _DISP = {"PickPlaceCounterToCabinet": "PnP (Counter→Cabinet)"}
-for _t in ["OpenDrawer", "PickPlaceCounterToCabinet"]:
+for _t in ["PickPlaceCounterToCabinet", "OpenDrawer"]:
     cells.append(code(
 "from pathlib import Path",
 "from IPython.display import Video, display, Markdown",
@@ -807,7 +871,8 @@ cells.append(md(
 "",
 "### Reproducibility",
 "- Every number above is **n = 50 episodes at held-out seed 5000**, with `n_action_steps = 10`.",
-"- Per-task specialists are fine-tuned from a **4-task multi-task BC base** (`π_pre`).",
+"- Per-task specialists are fine-tuned from a **multi-task behavior-cloning base** (`π_pre`),",
+"  pretrained across several RoboCasa kitchen tasks; we report the two tasks of §3.",
 "- Demonstration data: `pepijn223/robocasa_*` (LeRobotDataset v3). Base model:",
 "  `lerobot/pi05_base`.",
 "- Published checkpoints: [`dongjin630/recap-robocasa-<task>-{sft,vlmvf}`](https://huggingface.co/dongjin630).",
