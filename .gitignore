@@ -13,3 +13,4 @@ docs/NOTEBOOK_PLAN.md
 
 # notebook generator — kept local, not published
 build_notebook.py
+finalize_notebook.py
