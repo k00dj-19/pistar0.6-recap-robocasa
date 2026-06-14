@@ -142,6 +142,16 @@ cells = []
 
 # ===== Cell 0 — Title + who is this for / two ways to read ============================
 cells.append(md(
+"**Team #18**",
+"",
+"| Student ID | Name | Email |",
+"|---|---|---|",
+"| 20258019 | Dongjin Kim | dj_kim@kaist.ac.kr |",
+"| 20258212 | Hoiyeong Jin | hy.jin@kaist.ac.kr |",
+"| 20265280 | Seokju Yun | sj_yun@kaist.ac.kr |",
+"",
+"---",
+"",
 "# Teaching a Robot to Learn From Its Own Mistakes",
 "### A from-scratch tutorial on RECAP (π\\*0.6), rebuilt on LeRobot π0.5 + RoboCasa",
 "",
