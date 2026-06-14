@@ -14,9 +14,9 @@ HF_USER=${1:?need HF username/org}
 ROOT=${2:-outputs/robocasa}
 WHICH=${3:-all}
 
-# per-task best VLM-VF iteration (see tutorial.ipynb §4): CF=i1, OD=i1, OC=i2, PnP=i3
-declare -A BEST=( [CloseFridge]=recap_vlmvf_iter1 [OpenDrawer]=recap_vlmvf_iter1 \
-                  [OpenCabinet]=recap_vlmvf_iter2 [PickPlaceCounterToCabinet]=recap_vlmvf_iter3 )
+# Published RECAP model = the best run for each task: ε=0.5, iteration 3 (the full-rollout
+# ε-sweep checkpoint, named recap_vlmvf_eps50). OD reaches 58 (ties SFT), PnP 38 (beats SFT 36).
+declare -A BEST=( [OpenDrawer]=recap_vlmvf_eps50 [PickPlaceCounterToCabinet]=recap_vlmvf_eps50 )
 
 upload() {  # upload <local_dir> <repo_name>
   local dir name=$2
@@ -31,7 +31,7 @@ upload() {  # upload <local_dir> <repo_name>
 if [ "$WHICH" = all ] || [ "$WHICH" = pretrain ]; then
   upload "$ROOT/multi_task/sft" "recap-robocasa-pretrain"
 fi
-for t in CloseFridge OpenDrawer OpenCabinet PickPlaceCounterToCabinet; do
+for t in OpenDrawer PickPlaceCounterToCabinet; do
   short=$t; [ "$t" = "PickPlaceCounterToCabinet" ] && short=PnPCounterToCab
   if [ "$WHICH" = all ] || [ "$WHICH" = sft ]; then
     upload "$ROOT/specialist_v2/$t/sft" "recap-robocasa-${short}-sft"

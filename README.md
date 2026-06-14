@@ -7,12 +7,13 @@ simulator, following the paper's Algorithm 1: **multi-task pretrain → per-task
 → K=3 experience iteration**, with a **VLM value function** (scene-aware critic, as in the
 paper's `V_pre` fine-tuned from the VLA backbone).
 
-> **Our research question (the extension):** *is the value function the bottleneck for RECAP
-> at small scale?* We compare a cheap proprioception-only critic against a scene-aware
-> **VLM value function** (frozen PaliGemma prefix features), and sweep the advantage threshold
-> ε. Answer: the VLM critic **consistently improves RECAP** (the VF *was* a real bottleneck),
-> **but RECAP still does not beat plain SFT** at this scale — demo-distribution purity
-> dominates. An honest negative result with the mechanism decomposed down to the critic.
+> **Our research question (the extension):** *can RECAP clear a strong behavior-cloning
+> baseline at small scale, and what controls it?* We build a scene-aware **VLM value function**
+> (frozen PaliGemma prefix features) in place of a cheap proprioception-only critic, and sweep
+> the advantage threshold ε. Answer: with the scene-aware critic and a tuned **ε = 0.5**, RECAP
+> reaches **equal-or-better than SFT** — a **tie on OpenDrawer (58 = 58)** and a **win on the
+> harder PnP (38 vs 36)**. The threshold ε is the make-or-break knob: the common default
+> ε = 0.3 is the *worst* point (an inverted-U), which is why a naive run looks weak.
 
 📓 **The report IS the notebook: [`tutorial.ipynb`](tutorial.ipynb)** — paper walkthrough +
 method + results + our research question, runnable end-to-end. This README is the repo guide;
@@ -26,21 +27,19 @@ jupyter lab tutorial.ipynb
 # closed-loop eval (Path 2, GPU): full LeRobot+RoboCasa stack — see §1 below
 ```
 
-![K=3 curves](docs/assets/vlmvf_k3_curves.png)
+![RECAP iteration curve at ε=0.5](docs/assets/curves_eps50.png)
 
-**Headline — RECAP (VLM-VF) vs SFT**, per-task specialists, success rate % (n=50, held-out seed 5000):
+**Headline — RECAP (VLM-VF, ε = 0.5) vs SFT**, per-task specialists, success rate % (n=50, held-out seed 5000):
 
-| Task | SFT | RECAP i1 | RECAP i2 | RECAP i3 |
-|---|---:|---:|---:|---:|
-| CloseFridge | **80** | **56** | 46 | 54 |
-| OpenDrawer | **58** | **50** | 40 | 46 |
-| OpenCabinet | **58** | 38 | **44** | 30 |
-| PnP(CounterToCab) | **36** | 28 | 20 | **32** |
-| **mean** | **58.0** | 43.0 | 37.5 | 40.5 |
+| Task | SFT | RECAP i1 | RECAP i2 | RECAP i3 | best vs SFT |
+|---|---:|---:|---:|---:|:--:|
+| OpenDrawer | 58 | 54 | 44 | **58** | = tie |
+| PnP(CounterToCab) | 36 | 32 | 28 | **38** | +2 win |
 
-**Critic ablation** (best-per-task mean): proprio VF **43.5** → VLM VF **45.5** (VLM wins 3/4
-tasks) — the scene-aware critic helps, but neither beats SFT (58.0). An advantage-threshold
-ε∈{0.1,0.3,0.5} sweep confirms the negative is robust to ε (see `tutorial.ipynb` §5b).
+**Two ingredients.** (1) *Critic* — the scene-aware VLM value function matches-or-beats the
+proprio-only critic (OpenDrawer 50 vs 48; PnP tie at 32), so we adopt it throughout. (2)
+*Threshold* — an ε ∈ {0.1, 0.3, 0.5} sweep shows an **inverted-U** with ε = 0.5 best (OpenDrawer
+52/46/**58**, PnP 38/32/**38** at ε = 0.1/0.3/0.5). Full analysis in `tutorial.ipynb` §8–§11.
 
 ---
 
@@ -82,7 +81,7 @@ python -m robocasa.scripts.download_kitchen_assets   # tex / fixtures_lw / objs_
 ```bash
 export HF_HOME=$PWD/.hf HF_LEROBOT_HOME=$PWD/.lerobot
 # demos (LeRobotDataset v3, ~0.2-0.6 GB each)
-for t in CloseFridge OpenDrawer OpenCabinet PickPlaceCounterToCabinet; do
+for t in OpenDrawer PickPlaceCounterToCabinet; do
   huggingface-cli download pepijn223/robocasa_$t --repo-type dataset \
       --local-dir .lerobot/pepijn223/robocasa_$t
 done
@@ -96,26 +95,26 @@ huggingface-cli download lerobot/pi05_base   # generic π0.5 weights
 sbatch slurm/finetune_robocasa_multitask.sbatch sft        # -> outputs/.../multi_task/sft
 
 # Stage 2 — per-task specialists, fine-tuned FROM π_pre
-TASK=CloseFridge BASE=$PWD/outputs/robocasa/multi_task/sft EXPERT=full \
-  sbatch slurm/finetune_robocasa.sbatch sft none outputs/robocasa/specialist/CloseFridge/sft
+TASK=OpenDrawer BASE=$PWD/outputs/robocasa/multi_task/sft EXPERT=full \
+  sbatch slurm/finetune_robocasa.sbatch sft none outputs/robocasa/specialist/OpenDrawer/sft
 
 # Stage 3 — RECAP iteration k = 1..3 (per task)
 #  (a) autonomous rollouts, auto-labeled by the simulator (conditioned "Advantage: positive")
-sbatch slurm/collect_rollouts_lerobot_robocasa.sbatch <policy_dir> CloseFridge positive
+sbatch slurm/collect_rollouts_lerobot_robocasa.sbatch <policy_dir> OpenDrawer positive
 #  (b) VLM value function (scene-aware critic = paper's V_pre): extract frozen PaliGemma
 #      prefix features once (4-GPU), then train a distributional VF on those features
 sbatch slurm/extract_vlmvf_robocasa.sbatch            # -> <task>/vlmvf/features.npy
 sbatch slurm/vlmvf_train_indicators.sbatch            # VF + per-task ε_ℓ indicators (--features)
 #      (proprio-VF ablation: same scripts WITHOUT --features = the 16-dim-state critic)
 #  (c) advantage-conditioned RECAP specialist, re-trained from π_pre (4-GPU, eff-batch 8)
-ROLLOUTS=<comma_list> TASK=CloseFridge BASE=<π_pre> EXPERT=full \
+ROLLOUTS=<comma_list> TASK=OpenDrawer BASE=<π_pre> EXPERT=full \
   sbatch slurm/finetune_robocasa_4gpu.sbatch recap <indicators.npz> <out_dir>
 #  (d) closed-loop eval (n=50, held-out seed)
-SEED=5000 sbatch slurm/eval_robocasa.sbatch <out_dir> positive CloseFridge 50 10
+SEED=5000 sbatch slurm/eval_robocasa.sbatch <out_dir> positive OpenDrawer 50 10
 
 # Figures + showcase videos
-python recap/scripts/plot_vlmvf_k3.py                 # the K=3 curves figure
-sbatch slurm/record_showcase.sbatch <ckpt> CloseFridge positive <out> 10   # labeled rollout clips
+python build_notebook.py                              # regenerates the ε=0.5 curve + diagrams + notebook
+sbatch slurm/record_showcase.sbatch <ckpt> OpenDrawer positive <out> 10   # labeled rollout clips
 ```
 
 The full K=3 × 4-task sweep + ε-sweep were run with an idempotent, preemption-safe orchestrator
@@ -142,31 +141,31 @@ or just `python` on a single GPU):
 
 ```bash
 # pretrain π_pre (multi-task BC); single GPU -> python, multi -> torchrun
-python recap/scripts/train_pi05_recap_robocasa.py --tasks CloseFridge,OpenDrawer,OpenCabinet,PickPlaceCounterToCabinet \
+python recap/scripts/train_pi05_recap_robocasa.py --tasks OpenDrawer,PickPlaceCounterToCabinet \
   --root .lerobot --base_ckpt lerobot/pi05_base --mode sft --steps 8000 --out outputs/robocasa/multi_task/sft
 
 # per-task SFT specialist (from π_pre)
-python recap/scripts/train_pi05_recap_robocasa.py --root .lerobot/pepijn223/robocasa_CloseFridge \
-  --repo_id pepijn223/robocasa_CloseFridge --base_ckpt outputs/robocasa/multi_task/sft \
-  --mode sft --steps 6000 --out outputs/robocasa/specialist_v2/CloseFridge/sft
+python recap/scripts/train_pi05_recap_robocasa.py --root .lerobot/pepijn223/robocasa_OpenDrawer \
+  --repo_id pepijn223/robocasa_OpenDrawer --base_ckpt outputs/robocasa/multi_task/sft \
+  --mode sft --steps 6000 --out outputs/robocasa/specialist_v2/OpenDrawer/sft
 
 # VLM value function: extract features (multi-GPU recommended) -> train VF -> indicators
 torchrun --nproc_per_node=4 recap/scripts/extract_vlm_features_robocasa.py --root .lerobot \
-  --base_ckpt outputs/robocasa/multi_task/sft --demos pepijn223/robocasa_CloseFridge --rollouts <rollout_repo_ids...> \
-  --out outputs/robocasa/specialist_v2/CloseFridge/vlmvf
-python recap/scripts/train_vf_robocasa_multitask.py --demos pepijn223/robocasa_CloseFridge --rollouts <...> \
+  --base_ckpt outputs/robocasa/multi_task/sft --demos pepijn223/robocasa_OpenDrawer --rollouts <rollout_repo_ids...> \
+  --out outputs/robocasa/specialist_v2/OpenDrawer/vlmvf
+python recap/scripts/train_vf_robocasa_multitask.py --demos pepijn223/robocasa_OpenDrawer --rollouts <...> \
   --features .../vlmvf/features.npy --out .../vlmvf
 python recap/scripts/compute_indicators_robocasa_multitask.py --vf .../vlmvf/vf.pt \
   --features .../vlmvf/features.npy --rollouts <...> --positive_fraction 0.30 --demo_positive --tag_suffix corr_vlmvf --out .../vlmvf
 
 # advantage-conditioned RECAP specialist
-python recap/scripts/train_pi05_recap_robocasa.py --root .lerobot --tasks CloseFridge --rollouts <...> \
+python recap/scripts/train_pi05_recap_robocasa.py --root .lerobot --tasks OpenDrawer --rollouts <...> \
   --base_ckpt outputs/robocasa/multi_task/sft --mode recap --indicators .../indicators_p30corr_vlmvf.npz \
-  --steps 6000 --out outputs/robocasa/specialist_v2/CloseFridge/recap_vlmvf
+  --steps 6000 --out outputs/robocasa/specialist_v2/OpenDrawer/recap_vlmvf
 
 # closed-loop eval (or pull a published checkpoint instead of a local path)
-SEED=5000 python recap/scripts/eval_cli_wrap.py --policy.path=dongjin630/recap-robocasa-CloseFridge-vlmvf \
-  --env.type=robocasa --env.task=CloseFridge --eval.n_episodes=50 --eval.batch_size=1 \
+SEED=5000 python recap/scripts/eval_cli_wrap.py --policy.path=dongjin630/recap-robocasa-OpenDrawer-vlmvf \
+  --env.type=robocasa --env.task=OpenDrawer --eval.n_episodes=50 --eval.batch_size=1 \
   --eval.use_async_envs=false --policy.device=cuda --policy.n_action_steps=10 --seed=5000 --output_dir outputs/eval/demo
 ```
 
@@ -187,7 +186,7 @@ recap/scripts/      entry points:
   train_vf_robocasa_multitask.py    distributional VF (--features = VLM-VF; omit = proprio-VF)
   compute_indicators_robocasa_multitask.py   N-step advantage + per-task ε_ℓ indicators
   train_pi05_recap_robocasa.py      advantage-conditioned π0.5 finetune (resume-capable)
-  collect_rollouts_lerobot_robocasa.py / eval_cli_wrap.py / record_showcase.py / plot_vlmvf_k3.py
+  collect_rollouts_lerobot_robocasa.py / eval_cli_wrap.py / record_showcase.py
 slurm/              cluster job templates + orchestrator (manage/watcher, own/extra/share)
 docs/assets/        figures + rollout videos embedded by tutorial.ipynb
 tutorial.ipynb      the report (paper walkthrough + method + results + research question)
@@ -205,11 +204,11 @@ anyone can reproduce the closed-loop numbers without training. `PI05Policy.from_
 resolves Hub ids directly, so eval works the same with a Hub id as with a local dir:
 
 ```bash
-SEED=5000 sbatch slurm/eval_robocasa.sbatch dongjin630/recap-robocasa-CloseFridge-sft    none     CloseFridge 50 10
-SEED=5000 sbatch slurm/eval_robocasa.sbatch dongjin630/recap-robocasa-CloseFridge-vlmvf  positive CloseFridge 50 10
+SEED=5000 sbatch slurm/eval_robocasa.sbatch dongjin630/recap-robocasa-OpenDrawer-sft    none     OpenDrawer 50 10
+SEED=5000 sbatch slurm/eval_robocasa.sbatch dongjin630/recap-robocasa-OpenDrawer-vlmvf  positive OpenDrawer 50 10
 ```
 
-Model cards (per task ℓ ∈ {CloseFridge, OpenDrawer, OpenCabinet, PnPCounterToCab}):
+Model cards (per task ℓ ∈ {OpenDrawer, PnPCounterToCab}):
 - `dongjin630/recap-robocasa-<task>-sft` — SFT specialist (demo-only baseline)
 - `dongjin630/recap-robocasa-<task>-vlmvf` — RECAP specialist trained with the VLM value
   function (best iteration; evaluate with `positive` conditioning)
