@@ -17,7 +17,7 @@ paper's `V_pre` fine-tuned from the VLA backbone).
 > tasks the common default **ε = 0.3 is the worst of the three values tested** (a U-shape with
 > its valley at 0.3), which is why a naive run at the default looks weak.
 
-📓 **The report IS the notebook: [`tutorial.ipynb`](tutorial.ipynb)** — paper walkthrough +
+📓 **The report IS the notebook: [`Team18_report.ipynb`](Team18_report.ipynb)** — paper walkthrough +
 method + results + our research question, runnable end-to-end. This README is the repo guide;
 the notebook is the writeup.
 
@@ -25,7 +25,7 @@ the notebook is the writeup.
 # read/run the report notebook (Path 1, no GPU): light conda env
 conda env create -f environment.yml && conda activate recap-robocasa-nb
 python -m ipykernel install --user --name recap-robocasa-nb
-jupyter lab tutorial.ipynb
+jupyter lab Team18_report.ipynb
 # closed-loop eval (Path 2, GPU): full LeRobot+RoboCasa stack — see §1 below
 ```
 
@@ -42,11 +42,11 @@ At n=50 the 95% CI is ≈ ±13–14 pts, so these differences are not individual
 the result is **parity** (RECAP does not degrade), with the PnP gain pointing the right way.
 
 **Two ingredients.** (1) *Critic* — the scene-aware VLM value function is better *calibrated*
-than a proprio-only one (the real, measurable win; see `fig4`), and its policy ties OpenDrawer
+than a proprio-only one (the real, measurable win; see the value-function figure), and its policy ties OpenDrawer
 (46=46) and is +4 on PnP (32 vs 28) at iter3, ε=0.3 — never worse, adopted on principle. (2)
 *Threshold* — an ε ∈ {0.1, 0.3, 0.5} sweep is **U-shaped with its valley at the default 0.3**;
 ε = 0.5 is best *within the tested range* (OpenDrawer 52/46/**58**, PnP 38/32/**38**). Full
-analysis in `tutorial.ipynb` §8–§11.
+analysis in `Team18_report.ipynb` §8–§11.
 
 ---
 
@@ -109,12 +109,12 @@ huggingface-cli download lerobot/pi05_base   # generic π0.5 weights
 ## 3. Pipeline (paper Algorithm 1)
 
 ```bash
-# Stage 1 — pretrain π_pre: multi-task BC over all 4 task demos (4-GPU DDP)
+# Stage 1 — pretrain π_pre: multi-task BC over the kitchen-task demos (4-GPU DDP)
 sbatch slurm/finetune_robocasa_multitask.sbatch sft        # -> outputs/.../multi_task/sft
 
 # Stage 2 — per-task specialists, fine-tuned FROM π_pre
 TASK=OpenDrawer BASE=$PWD/outputs/robocasa/multi_task/sft EXPERT=full \
-  sbatch slurm/finetune_robocasa.sbatch sft none outputs/robocasa/specialist/OpenDrawer/sft
+  sbatch slurm/finetune_robocasa.sbatch sft none outputs/robocasa/specialist_v2/OpenDrawer/sft
 
 # Stage 3 — RECAP iteration k = 1..3 (per task)
 #  (a) autonomous rollouts, auto-labeled by the simulator (conditioned "Advantage: positive")
@@ -205,8 +205,8 @@ recap/scripts/      entry points:
   train_pi05_recap_robocasa.py      advantage-conditioned π0.5 finetune (resume-capable)
   collect_rollouts_lerobot_robocasa.py / eval_cli_wrap.py / record_showcase.py
 slurm/              cluster job templates + orchestrator (manage/watcher, own/extra/share)
-docs/assets/        figures + rollout videos embedded by tutorial.ipynb
-tutorial.ipynb      the report (paper walkthrough + method + results + research question)
+docs/assets/        figures + rollout videos embedded by Team18_report.ipynb
+Team18_report.ipynb      the report (paper walkthrough + method + results + research question)
 ```
 
 ## Models & data (HuggingFace Hub)
@@ -238,6 +238,6 @@ SEED=5000 sbatch slurm/eval_robocasa.sbatch dongjin630/recap-robocasa-OpenDrawer
 Model cards (per task ℓ ∈ {OpenDrawer, PnPCounterToCab}):
 - `dongjin630/recap-robocasa-<task>-sft` — SFT specialist (demo-only baseline)
 - `dongjin630/recap-robocasa-<task>-vlmvf` — RECAP specialist trained with the VLM value
-  function (best iteration; evaluate with `positive` conditioning)
+  function (final iteration i3, ε=0.5; evaluate with `positive` conditioning)
 
 Upload (maintainer): `bash scripts_release/upload_checkpoints.sh dongjin630 outputs/robocasa "sft vlmvf"`
