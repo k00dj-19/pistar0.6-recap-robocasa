@@ -55,19 +55,30 @@ analysis in `tutorial.ipynb` §8–§11.
 Tested on Linux + NVIDIA B200 (CUDA 12.8). Python 3.12 via `uv` (or conda/venv).
 
 ```bash
-uv venv .venv --python 3.12 && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate && pip install -U pip
 
-# LeRobot (pi0.5 + datasets), editable
+# LeRobot (pi0.5), editable. PIN to the main commit we used: released tags (<= v0.5.1) do NOT
+# contain src/lerobot/envs/robocasa.py (the RoboCasa env was added on main just after v0.5.1),
+# so a tagged checkout fails the eval. The 'pi' extra pulls torch + datasets.
 git clone https://github.com/huggingface/lerobot refs/lerobot && cd refs/lerobot
-git checkout v0.5.2   # version used in this work
-pip install -e ".[pi,dataset]" && cd ../..
+git checkout 79c68214   # main commit with the RoboCasa env; NOT v0.5.1/v0.5.2 (no robocasa.py)
+pip install -e ".[pi]" && cd ../..
 
 # robosuite / robocasa (pinned SHAs from LeRobot's docker/Dockerfile.benchmark.robocasa)
 mkdir -p third_party && cd third_party
 git clone https://github.com/ARISE-Initiative/robosuite && (cd robosuite && git checkout aaa8b9b)
 git clone https://github.com/robocasa/robocasa && (cd robocasa && git checkout 56e355c)
-pip install -e robosuite && pip install -e robocasa --no-deps && cd ..
-pip install "mujoco==3.3.1" "numpy==2.2.5" numba opencv-python-headless av
+pip install -e robosuite
+pip install -e robocasa --no-deps   # --no-deps so robocasa's lerobot==0.3.3 pin can't downgrade
+cd ..
+# robocasa's runtime deps (skipped by --no-deps), minus lerobot/opencv:
+pip install h5py lxml scipy imageio pygame Pillow pyyaml tqdm termcolor pynput hidapi "tianshou==0.4.10" gymnasium
+pip install "mujoco==3.3.1" "numpy==2.2.5" numba av
+# robosuite pulls in non-headless opencv-python (needs libGL); force the headless build to win:
+pip uninstall -y opencv-python opencv-python-headless && pip install opencv-python-headless
+
+# System GL/EGL for headless MuJoCo: need libGL.so.1 AND the GLVND libEGL.so.1 frontend
+#   sudo apt-get install -y libgl1 libglvnd0 libegl1   (or just use the NGC container)
 
 # RoboCasa kitchen assets (lightweight pack)
 python -m robocasa.scripts.download_kitchen_assets   # tex / fixtures_lw / objs_lw
