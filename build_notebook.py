@@ -101,24 +101,28 @@ def make_diagrams(assets_dir="docs/assets"):
     fig.savefig(os.path.join(assets_dir, "diagram_recap_loop.png"), dpi=130, bbox_inches="tight")
     plt.close(fig)
 
-    # ---- Diagram 3: the ε=0.5 RECAP iteration curve (OpenDrawer & PnP vs SFT) ----------
+    # ---- Diagram 3: the ε=0.5 RECAP iteration curves — one panel per task, side by side --
     # All values are measured closed-loop success % (n=50, seed 5000).
     iters = [1, 2, 3]
-    OD   = [54, 44, 58]; OD_SFT  = 58
-    PNP  = [32, 28, 38]; PNP_SFT = 36
-    fig, ax = plt.subplots(figsize=(7.2, 4.6))
-    ax.plot(iters, OD,  "-o", color="#2563eb", lw=2.4, ms=8, label="OpenDrawer — RECAP (ε=0.5)")
-    ax.plot(iters, PNP, "-o", color="#16a34a", lw=2.4, ms=8, label="PnP — RECAP (ε=0.5)")
-    ax.axhline(OD_SFT,  ls="--", color="#2563eb", alpha=0.6, lw=1.8)
-    ax.axhline(PNP_SFT, ls="--", color="#16a34a", alpha=0.6, lw=1.8)
-    ax.text(3.02, OD_SFT + 0.4,  "OpenDrawer SFT = 58", color="#2563eb", fontsize=8.5, va="bottom", ha="right")
-    ax.text(3.02, PNP_SFT - 0.4, "PnP SFT = 36",        color="#16a34a", fontsize=8.5, va="top",    ha="right")
-    for x, y in zip(iters, OD):  ax.annotate(str(y), (x, y), textcoords="offset points", xytext=(0, 9),  ha="center", fontsize=9, color="#2563eb")
-    for x, y in zip(iters, PNP): ax.annotate(str(y), (x, y), textcoords="offset points", xytext=(0, -14), ha="center", fontsize=9, color="#16a34a")
-    ax.set_xticks(iters); ax.set_xlabel("RECAP iteration"); ax.set_ylabel("closed-loop success %  (n=50, seed 5000)")
-    ax.set_ylim(20, 66); ax.set_xlim(0.8, 3.2)
-    ax.set_title("RECAP iteration curve at ε=0.5 — by iter 3, RECAP ties SFT (OpenDrawer)\nand surpasses it (PnP).", fontsize=11, fontweight="bold")
-    ax.grid(True, alpha=0.25); ax.legend(loc="lower right", fontsize=9, framealpha=0.95)
+    panels = [
+        ("OpenDrawer", [54, 44, 58], 58, "#2563eb", "matches SFT (58 = 58)"),
+        ("PnP (Counter→Cabinet)", [32, 28, 38], 36, "#16a34a", "beats SFT (38 > 36)"),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.4), sharey=False)
+    for ax, (name, ys, sft, color, verdict) in zip(axes, panels):
+        ax.plot(iters, ys, "-o", color=color, lw=2.6, ms=9, label="RECAP (ε=0.5)")
+        ax.axhline(sft, ls="--", color="#6b7280", lw=1.8, label=f"SFT baseline = {sft}")
+        for x, y in zip(iters, ys):
+            ax.annotate(str(y), (x, y), textcoords="offset points", xytext=(0, 10),
+                        ha="center", fontsize=10, fontweight="bold", color=color)
+        ax.set_xticks(iters); ax.set_xlabel("RECAP iteration")
+        ax.set_ylabel("closed-loop success %  (n=50, seed 5000)")
+        lo = min(min(ys), sft) - 8; hi = max(max(ys), sft) + 8
+        ax.set_ylim(lo, hi); ax.set_xlim(0.8, 3.2)
+        ax.set_title(f"{name}\nby iter 3, RECAP {verdict}", fontsize=11, fontweight="bold", color=color)
+        ax.grid(True, alpha=0.25); ax.legend(loc="lower right", fontsize=9, framealpha=0.95)
+    fig.suptitle("RECAP iteration curves at ε = 0.5 — equal-or-better than SFT on both tasks",
+                 fontsize=12.5, fontweight="bold", y=1.04)
     fig.tight_layout()
     fig.savefig(os.path.join(assets_dir, "curves_eps50.png"), dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -433,12 +437,39 @@ cells.append(md(
 "",
 "### The four moving parts",
 "",
-"**1. A value function — the coach’s eye.** A second network, the **value function** `V(o)`,",
-"looks at a moment and estimates **“how well is this attempt going?”** We train it so that",
-"moments from successful demos score high (return ≈ 0) and moments from failed attempts score",
-"low (return ≈ −1). It genuinely separates the two — here is ours, calibrated on held-out data:",
+"**1. A value function — the coach’s eye.** This is the heart of the method, so let’s be",
+"concrete. The **value function** `V(o)` is a *separate, small* network (it is **not** the",
+"robot policy). It looks at a single moment `o` and answers one question: **“starting from",
+"here, how well is this attempt going?”** Its inputs and output:",
 "",
-"![Value function separates success from failure](docs/assets/fig4_value_function.png)",
+"- **Input — what it sees.** A summary of the moment plus *which task* is being attempted.",
+"  For our **scene-aware** critic (§7) the “what it sees” is not raw pixels but the VLA’s own",
+"  **frozen visual features** (a 2048-number PaliGemma embedding of the three camera views),",
+"  so the coach literally sees the scene the robot sees; a small **task embedding** tells it",
+"  whether this is OpenDrawer or PnP. A 3-layer MLP maps that to the output.",
+"- **Output — a score on a fixed scale.** We define the scale by the eventual **outcome** of",
+"  the trajectory the moment came from, normalized to **[−1, 0]**: a moment on a path that",
+"  ends in **success scores near 0**; a moment on a path that **fails scores near −1**. So",
+"  `V(o) ≈ 0` means *“on track,”* `V(o) ≈ −1` means *“this is going badly.”*",
+"- **How it’s trained (lightly).** Rather than regress a single number, `V(o)` predicts a",
+"  **distribution over 201 little bins** spanning [−1, 0] and is trained to match each frame’s",
+"  actual (Monte-Carlo) return; the reported score is just the distribution’s mean. Predicting",
+"  a distribution is simply more stable to train. (Full equation in the “under the hood” box.)",
+"",
+"Does it actually work? The two panels below — both on **held-out data the critic never",
+"trained on** — say yes:",
+"",
+"![Value function: value-over-time and calibration](docs/assets/fig4_value_function.png)",
+"",
+"- **Left — value over time.** Each line is one episode, with `V(o)` plotted from start",
+"  (time 0) to end (time 1). **Solid lines are successful episodes**: their value **climbs",
+"  toward 0** as the task gets accomplished — the coach can *feel* the attempt going well.",
+"  **Dashed lines are failures**: they **stay stuck near −1**. The two families clearly",
+"  separate, which is exactly what we need to label good vs bad moments.",
+"- **Right — calibration.** Every dot is one held-out moment: its **true** outcome-return",
+"  (x-axis) vs the critic’s **predicted** `V(o)` (y-axis). The red line is perfect prediction",
+"  (`y = x`); dots hugging it mean the critic is **calibrated** — its numbers match reality,",
+"  not just rank moments in the right order.",
 "",
 "**2. The advantage — “did this stretch go *better than expected*?”** From the value function",
 "we compute an **advantage** `A(o_t)`: looking ahead ~50 steps, did things improve more than",
